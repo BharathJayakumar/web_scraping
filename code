@@ -1,0 +1,130 @@
+import requests
+from bs4 import BeautifulSoup
+import time
+import logging
+import sqlite3
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename='news_scraping.log',
+    filemode='a'
+)
+
+# List of news sources and their respective configurations
+news_sources = [
+    {
+        'name': 'CNN',
+        'url': 'https://www.cnn.com/',
+        'article_tag': 'article',
+        'headline_tag': 'h3',
+        'summary_tag': 'p',
+        'headline_class': 'cd__headline',
+        'summary_class': 'cd__summary',
+        'stock_keywords': ['stock', 'market', 'trading', 'investing']
+    },
+    {
+        'name': 'BBC',
+        'url': 'https://www.bbc.com/news/business',
+        'article_tag': 'article',
+        'headline_tag': 'h3',
+        'summary_tag': 'p',
+        'headline_class': '',
+        'summary_class': '',
+        'stock_keywords': ['stock', 'market', 'trading', 'investing']
+    }
+]
+
+# Connect to the SQLite database
+conn = sqlite3.connect('news_articles.db')
+cursor = conn.cursor()
+
+# Create the news_articles table if it doesn't exist
+create_table_query = '''
+    CREATE TABLE IF NOT EXISTS news_articles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        headline TEXT,
+        summary TEXT,
+        link TEXT
+    )
+'''
+cursor.execute(create_table_query)
+
+# Variable to control the execution of the program
+running = True
+
+# Function to extract and process news from a single source
+def process_news(source):
+    logging.info(f"Fetching stock-related news from {source['name']}...")
+    logging.info('---------------------')
+
+    # Send a GET request to the news source URL
+    try:
+        response = requests.get(source['url'])
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching data from {source['name']}: {e}")
+        return
+
+    # Create a BeautifulSoup object to parse the HTML content
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    # Find the specific elements containing the news articles
+    articles = soup.find_all(source['article_tag'])
+
+    # Loop through the articles and extract relevant information
+    for article in articles:
+        try:
+            # Extract the headline
+            headline = article.find(source['headline_tag'], class_=source['headline_class']).text.strip()
+
+            # Extract the description or summary
+            summary = article.find(source['summary_tag'], class_=source['summary_class']).text.strip()
+
+            # Check if the headline or summary contains any stock-related keywords
+            is_stock_related = any(keyword in headline.lower() or keyword in summary.lower() for keyword in source['stock_keywords'])
+
+            # If it is stock-related, log the information and insert into the database
+            if is_stock_related:
+                # Extract the article link
+                link = article.find('a')['href']
+
+                logging.info('Headline: %s', headline)
+                logging.info('Summary: %s', summary)
+                logging.info('Link: %s', link)
+                logging.info('---------------------')
+
+                # Insert the data into the database
+                insert_query = "INSERT INTO news_articles (headline, summary, link) VALUES (%s, %s, %s)"
+                values = (headline, summary, link)
+                cursor.execute(insert_query, values)
+                cnx.commit()
+
+        except AttributeError:
+            # Handle missing or incorrectly formatted elements
+            logging.error(f"Error extracting information from the article on {source['name']}")
+            logging.info('---------------------')
+
+# Function to run the program every minute
+def run_program():
+    while running:
+        for source in news_sources:
+            process_news(source)
+
+        # Delay execution for 1 minute
+        time.sleep(60)
+
+# Function to stop the program
+def stop_program():
+    global running
+    running = False
+
+# Start running the program
+run_program()
+
+# Wait for user input to stop the program
+input("Press Enter to stop the program...")
+
+# Call the stop_program function to stop the program
+stop_program()
